@@ -12,6 +12,7 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import { UniversalEncoder } from '@astermind/astermind-elm';
 import { ModelManager } from './model-manager.js';
 import type { 
   ClassifierConfig, 
@@ -197,9 +198,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Extract unique categories from training data
         const categories = Array.from(new Set(training_data.map(d => d.label)));
         
-        // Create classifier with configuration
+        // Create encoder explicitly for text-based classification
+        const encoder = new UniversalEncoder({
+          maxLen: config?.maxLen || 30,
+          mode: 'char'  // Use character-based encoding
+        });
+        
+        // Create classifier with configuration for TEXT mode
         const classifierConfig: ClassifierConfig = {
           categories,
+          useTokenizer: true,  // Enable text mode
+          encoder,  // Pass the encoder instance
           hiddenUnits: config?.hiddenUnits || 128,
           activation: config?.activation || 'relu',
           weightInit: config?.weightInit || 'xavier',
@@ -211,18 +220,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Create and train model
         const elm = modelManager.createClassifier(model_id, classifierConfig, description);
         
-        // Convert training data to ELM format
+        // Now encoder should be available
         const trainingTexts = training_data.map(d => d.text);
         const trainingLabels = training_data.map(d => d.label);
         
-        elm.trainFromData(
-          trainingTexts.map(text => elm.encoder.encode(text)),
-          trainingLabels.map(label => {
-            const encoded = new Array(categories.length).fill(0);
-            encoded[categories.indexOf(label)] = 1;
-            return encoded;
-          })
-        );
+        // Encode training data
+        const encodedX = trainingTexts.map(text => encoder.encode(text));
+        const encodedY = trainingLabels.map(label => {
+          const encoded = new Array(categories.length).fill(0);
+          encoded[categories.indexOf(label)] = 1;
+          return encoded;
+        });
+        
+        elm.trainFromData(encodedX, encodedY);
 
         return {
           content: [
@@ -250,9 +260,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const elm = modelManager.getModel(model_id);
         const results = elm.predict(text, top_k);
         
-        const predictions: PredictionResult[] = results.map((r: { category: string; confidence: number }) => ({
-          category: r.category,
-          confidence: r.confidence
+        // ELM returns {label, prob} - map to our format
+        const predictions: PredictionResult[] = results.map((r: { label: string; prob: number }) => ({
+          category: r.label,
+          confidence: r.prob
         }));
 
         return {
@@ -272,13 +283,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         const elm = modelManager.getModel(model_id);
-        const embedding = elm.getEmbedding(text);
+        
+        // Get encoder and encode the text
+        const encoder = elm.getEncoder();
+        if (!encoder) {
+          throw new Error('Model does not have an encoder configured');
+        }
+        
+        const encoded = encoder.encode(text);
+        // getEmbedding expects 2D array (matrix), so wrap in array
+        const embedding = elm.getEmbedding([encoded]);
 
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({ embedding }, null, 2)
+              text: JSON.stringify({ embedding: embedding[0] }, null, 2)
             }
           ]
         };
@@ -319,8 +339,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { model_id } = args as { model_id: string };
         
         const elm = modelManager.getModel(model_id);
-        const modelJSON = elm.toJSON();
         const metadata = modelManager.getMetadata(model_id);
+        
+        // Return model summary (not full matrices which can be huge)
+        const modelSummary = {
+          config: {
+            categories: elm.categories,
+            hiddenUnits: elm.hiddenUnits,
+            activation: elm.activation,
+            maxLen: elm.maxLen,
+            charSet: elm.charSet,
+            useTokenizer: elm.useTokenizer,
+            dropout: elm.dropout,
+            ridgeLambda: elm.ridgeLambda
+          },
+          metrics: elm.metrics,
+          model_info: {
+            has_weights: elm.model?.W ? true : false,
+            weight_dimensions: elm.model?.W ? `${elm.model.W.length}x${elm.model.W[0]?.length}` : null,
+            has_bias: elm.model?.b ? true : false,
+            has_beta: elm.model?.beta ? true : false
+          }
+        };
 
         return {
           content: [
@@ -329,7 +369,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify({ 
                 model_id,
                 metadata,
-                model_data: modelJSON 
+                summary: modelSummary,
+                note: "Model is stored in memory. Full weight matrices are too large to export via MCP."
               }, null, 2)
             }
           ]

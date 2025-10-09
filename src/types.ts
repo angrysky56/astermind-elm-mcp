@@ -35,12 +35,16 @@ export interface ModelMetadata {
  */
 export interface ClassifierConfig {
   categories: string[];
+  useTokenizer?: boolean;  // Enable text encoding (required for text classification)
+  encoder?: any;  // Optional prebuilt encoder instance (from UniversalEncoder)
   hiddenUnits?: number;
   activation?: ActivationType;
   weightInit?: WeightInit;
   ridgeLambda?: number;
   maxLen?: number;
   dropout?: number;
+  charSet?: string;  // Character set for encoding
+  tokenizerDelimiter?: RegExp;  // Delimiter for tokenization
 }
 
 /**
