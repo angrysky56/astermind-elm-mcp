@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "astermind-elm": {
+      "command": "node",
+      "args": [
+        "/your-path-to/astermind-elm-mcp/build/index.js"
+      ],
+      "env": {}
+    }
+  }
+}
