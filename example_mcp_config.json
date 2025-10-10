@@ -3,7 +3,7 @@
     "astermind-elm": {
       "command": "node",
       "args": [
-        "/home/ty/Repositories/ai_workspace/astermind-elm-mcp/build/index.js"
+        "/your-path-to/astermind-elm-mcp/build/index.js"
       ],
       "env": {
         "ENABLE_PERSISTENCE": "true",
