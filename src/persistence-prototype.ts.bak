@@ -1,0 +1,486 @@
+// Example: SurrealDB Integration Prototype
+// This demonstrates how the new persistence layer would work
+
+import { Surreal } from 'surrealdb.js';
+
+export class SurrealDBPersistence {
+  private db: Surreal;
+  private connected: boolean = false;
+
+  constructor(
+    private config: {
+      url: string;
+      namespace: string;
+      database: string;
+      username: string;
+      password: string;
+    }
+  ) {
+    this.db = new Surreal();
+  }
+
+  async connect(): Promise<void> {
+    await this.db.connect(this.config.url);
+    await this.db.signin({
+      username: this.config.username,
+      password: this.config.password,
+    });
+    await this.db.use({
+      namespace: this.config.namespace,
+      database: this.config.database,
+    });
+    this.connected = true;
+  }
+
+  // Store model with versioning
+  async storeModel(params: {
+    model_id: string;
+    version: string;
+    config: object;
+    weights: Buffer;  // ELM weights serialized
+    categories: string[];
+    trained_on?: string;  // dataset_id
+    tags?: string[];
+    metadata?: object;
+  }): Promise<{ success: boolean; record_id: string }> {
+    const result = await this.db.create('models', {
+      model_id: params.model_id,
+      version: params.version,
+      config: params.config,
+      weights: params.weights.toString('base64'),  // Store as base64
+      categories: params.categories,
+      created_at: new Date().toISOString(),
+      trained_on: params.trained_on,
+      tags: params.tags || [],
+      metadata: params.metadata || {},
+      status: 'active',
+    });
+    
+    return {
+      success: true,
+      record_id: result[0].id,
+    };
+  }
+
+  // Load model by ID and optional version
+  async loadModel(
+    model_id: string,
+    version?: string
+  ): Promise<{
+    config: object;
+    weights: Buffer;
+    categories: string[];
+    metadata: object;
+  } | null> {
+    let query: string;
+    
+    if (version) {
+      query = `SELECT * FROM models WHERE model_id = $model_id AND version = $version AND status = 'active' LIMIT 1`;
+    } else {
+      // Get latest version
+      query = `SELECT * FROM models WHERE model_id = $model_id AND status = 'active' ORDER BY created_at DESC LIMIT 1`;
+    }
+    
+    const result = await this.db.query(query, {
+      model_id,
+      version,
+    });
+    
+    if (!result || result.length === 0 || result[0].length === 0) {
+      return null;
+    }
+    
+    const model = result[0][0];
+    
+    return {
+      config: model.config,
+      weights: Buffer.from(model.weights, 'base64'),
+      categories: model.categories,
+      metadata: model.metadata,
+    };
+  }
+
+  // Store training dataset
+  async storeDataset(params: {
+    dataset_id: string;
+    examples: Array<{ text: string; label: string }>;
+    metadata?: object;
+  }): Promise<{ success: boolean; record_id: string }> {
+    const result = await this.db.create('datasets', {
+      dataset_id: params.dataset_id,
+      examples: params.examples,
+      size: params.examples.length,
+      created_at: new Date().toISOString(),
+      metadata: params.metadata || {},
+    });
+    
+    return {
+      success: true,
+      record_id: result[0].id,
+    };
+  }
+
+  // Log prediction for monitoring
+  async logPrediction(params: {
+    model_id: string;
+    version: string;
+    input_text: string;
+    predicted_label: string;
+    confidence: number;
+    ground_truth?: string;
+    latency_ms: number;
+    metadata?: object;
+  }): Promise<{ success: boolean }> {
+    const correct = params.ground_truth
+      ? params.predicted_label === params.ground_truth
+      : undefined;
+    
+    await this.db.create('predictions', {
+      model_id: params.model_id,
+      version: params.version,
+      input_text: params.input_text,
+      predicted_label: params.predicted_label,
+      confidence: params.confidence,
+      ground_truth: params.ground_truth,
+      correct,
+      latency_ms: params.latency_ms,
+      timestamp: new Date().toISOString(),
+      metadata: params.metadata || {},
+    });
+    
+    return { success: true };
+  }
+
+  // Get model performance metrics
+  async getModelMetrics(
+    model_id: string,
+    timeRange?: { start: Date; end: Date }
+  ): Promise<{
+    accuracy?: number;
+    total_predictions: number;
+    avg_confidence: number;
+    avg_latency_ms: number;
+    predictions_per_label: Record<string, number>;
+  }> {
+    let query = `
+      SELECT
+        count() as total,
+        math::mean(confidence) as avg_confidence,
+        math::mean(latency_ms) as avg_latency,
+        array::group(predicted_label) as labels
+      FROM predictions
+      WHERE model_id = $model_id
+    `;
+    
+    if (timeRange) {
+      query += ` AND timestamp >= $start AND timestamp <= $end`;
+    }
+    
+    const result = await this.db.query(query, {
+      model_id,
+      start: timeRange?.start.toISOString(),
+      end: timeRange?.end.toISOString(),
+    });
+    
+    const stats = result[0][0];
+    
+    // Calculate accuracy if ground truth available
+    const accuracyQuery = `
+      SELECT
+        count() as total,
+        array::len(array::filter(correct, |$v| $v == true)) as correct_count
+      FROM predictions
+      WHERE model_id = $model_id AND correct != NONE
+    `;
+    
+    const accuracyResult = await this.db.query(accuracyQuery, { model_id });
+    const accuracyStats = accuracyResult[0][0];
+    
+    const accuracy = accuracyStats.total > 0
+      ? accuracyStats.correct_count / accuracyStats.total
+      : undefined;
+    
+    return {
+      accuracy,
+      total_predictions: stats.total,
+      avg_confidence: stats.avg_confidence,
+      avg_latency_ms: stats.avg_latency,
+      predictions_per_label: stats.labels.reduce((acc: any, label: string) => {
+        acc[label] = (acc[label] || 0) + 1;
+        return acc;
+      }, {}),
+    };
+  }
+
+  // Store embeddings in vector store
+  async storeEmbeddings(params: {
+    collection_name: string;
+    items: Array<{
+      item_id: string;
+      text: string;
+      embedding: number[];
+      metadata?: object;
+    }>;
+  }): Promise<{ success: boolean; count: number }> {
+    const records = params.items.map(item => ({
+      collection_name: params.collection_name,
+      item_id: item.item_id,
+      text: item.text,
+      embedding: item.embedding,
+      metadata: item.metadata || {},
+      created_at: new Date().toISOString(),
+    }));
+    
+    await this.db.insert('embeddings', records);
+    
+    return {
+      success: true,
+      count: records.length,
+    };
+  }
+
+  // Search similar embeddings using cosine similarity
+  async searchSimilar(params: {
+    collection_name: string;
+    query_embedding: number[];
+    top_k: number;
+    filters?: object;
+  }): Promise<
+    Array<{
+      item_id: string;
+      text: string;
+      similarity: number;
+      metadata: object;
+    }>
+  > {
+    // SurrealDB has built-in vector similarity functions
+    const query = `
+      SELECT
+        item_id,
+        text,
+        metadata,
+        vector::similarity::cosine(embedding, $query_embedding) AS similarity
+      FROM embeddings
+      WHERE collection_name = $collection_name
+      ORDER BY similarity DESC
+      LIMIT $top_k
+    `;
+    
+    const result = await this.db.query(query, {
+      collection_name: params.collection_name,
+      query_embedding: params.query_embedding,
+      top_k: params.top_k,
+    });
+    
+    return result[0];
+  }
+
+  // Get confusion matrix
+  async getConfusionMatrix(
+    model_id: string,
+    timeRange?: { start: Date; end: Date }
+  ): Promise<Record<string, Record<string, number>>> {
+    let query = `
+      SELECT
+        predicted_label,
+        ground_truth,
+        count() as count
+      FROM predictions
+      WHERE model_id = $model_id AND ground_truth != NONE
+    `;
+    
+    if (timeRange) {
+      query += ` AND timestamp >= $start AND timestamp <= $end`;
+    }
+    
+    query += ` GROUP BY predicted_label, ground_truth`;
+    
+    const result = await this.db.query(query, {
+      model_id,
+      start: timeRange?.start.toISOString(),
+      end: timeRange?.end.toISOString(),
+    });
+    
+    const matrix: Record<string, Record<string, number>> = {};
+    
+    for (const row of result[0]) {
+      if (!matrix[row.ground_truth]) {
+        matrix[row.ground_truth] = {};
+      }
+      matrix[row.ground_truth][row.predicted_label] = row.count;
+    }
+    
+    return matrix;
+  }
+
+  // List model versions
+  async listModelVersions(
+    model_id: string
+  ): Promise<
+    Array<{
+      version: string;
+      created_at: string;
+      categories: string[];
+      metadata: object;
+    }>
+  > {
+    const query = `
+      SELECT version, created_at, categories, metadata
+      FROM models
+      WHERE model_id = $model_id AND status = 'active'
+      ORDER BY created_at DESC
+    `;
+    
+    const result = await this.db.query(query, { model_id });
+    return result[0];
+  }
+
+  // Detect model drift
+  async detectDrift(params: {
+    model_id: string;
+    baseline_window: { start: Date; end: Date };
+    current_window: { start: Date; end: Date };
+  }): Promise<{
+    drift_detected: boolean;
+    drift_score: number;
+    baseline_distribution: Record<string, number>;
+    current_distribution: Record<string, number>;
+  }> {
+    // Get label distribution for baseline period
+    const baselineQuery = `
+      SELECT
+        predicted_label,
+        count() as count
+      FROM predictions
+      WHERE model_id = $model_id
+        AND timestamp >= $baseline_start
+        AND timestamp <= $baseline_end
+      GROUP BY predicted_label
+    `;
+    
+    const baselineResult = await this.db.query(baselineQuery, {
+      model_id: params.model_id,
+      baseline_start: params.baseline_window.start.toISOString(),
+      baseline_end: params.baseline_window.end.toISOString(),
+    });
+    
+    // Get label distribution for current period
+    const currentQuery = `
+      SELECT
+        predicted_label,
+        count() as count
+      FROM predictions
+      WHERE model_id = $model_id
+        AND timestamp >= $current_start
+        AND timestamp <= $current_end
+      GROUP BY predicted_label
+    `;
+    
+    const currentResult = await this.db.query(currentQuery, {
+      model_id: params.model_id,
+      current_start: params.current_window.start.toISOString(),
+      current_end: params.current_window.end.toISOString(),
+    });
+    
+    // Calculate distributions
+    const baselineTotal = baselineResult[0].reduce(
+      (sum: number, row: any) => sum + row.count,
+      0
+    );
+    const currentTotal = currentResult[0].reduce(
+      (sum: number, row: any) => sum + row.count,
+      0
+    );
+    
+    const baselineDist: Record<string, number> = {};
+    for (const row of baselineResult[0]) {
+      baselineDist[row.predicted_label] = row.count / baselineTotal;
+    }
+    
+    const currentDist: Record<string, number> = {};
+    for (const row of currentResult[0]) {
+      currentDist[row.predicted_label] = row.count / currentTotal;
+    }
+    
+    // Calculate KL divergence as drift score
+    let driftScore = 0;
+    const allLabels = new Set([
+      ...Object.keys(baselineDist),
+      ...Object.keys(currentDist),
+    ]);
+    
+    for (const label of allLabels) {
+      const p = baselineDist[label] || 0.001; // Smoothing
+      const q = currentDist[label] || 0.001;
+      driftScore += p * Math.log(p / q);
+    }
+    
+    return {
+      drift_detected: driftScore > 0.1, // Threshold
+      drift_score: driftScore,
+      baseline_distribution: baselineDist,
+      current_distribution: currentDist,
+    };
+  }
+
+  async close(): Promise<void> {
+    await this.db.close();
+    this.connected = false;
+  }
+}
+
+// Example usage:
+/*
+const persistence = new SurrealDBPersistence({
+  url: 'ws://localhost:8000/rpc',
+  namespace: 'astermind',
+  database: 'production',
+  username: 'root',
+  password: 'root',
+});
+
+await persistence.connect();
+
+// Store a model
+await persistence.storeModel({
+  model_id: 'sentiment_v1',
+  version: '1.0.0',
+  config: { hiddenUnits: 128, activation: 'relu' },
+  weights: modelWeightsBuffer,
+  categories: ['positive', 'negative', 'neutral'],
+  tags: ['sentiment', 'production'],
+});
+
+// Log predictions
+await persistence.logPrediction({
+  model_id: 'sentiment_v1',
+  version: '1.0.0',
+  input_text: 'This is great!',
+  predicted_label: 'positive',
+  confidence: 0.95,
+  latency_ms: 2.3,
+});
+
+// Get metrics
+const metrics = await persistence.getModelMetrics('sentiment_v1');
+console.log('Accuracy:', metrics.accuracy);
+console.log('Avg confidence:', metrics.avg_confidence);
+
+// Detect drift
+const drift = await persistence.detectDrift({
+  model_id: 'sentiment_v1',
+  baseline_window: {
+    start: new Date('2025-09-01'),
+    end: new Date('2025-09-30'),
+  },
+  current_window: {
+    start: new Date('2025-10-01'),
+    end: new Date('2025-10-09'),
+  },
+});
+
+if (drift.drift_detected) {
+  console.log('Model drift detected! Score:', drift.drift_score);
+  // Trigger retraining
+}
+*/

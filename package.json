@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "init-db": "node build/scripts/init-db.js"
   },
   "keywords": [
     "mcp",
@@ -22,10 +23,13 @@
   "license": "MIT",
   "dependencies": {
     "@astermind/astermind-elm": "^2.1.0",
-    "@modelcontextprotocol/sdk": "^1.0.4"
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "node-cron": "^3.0.3",
+    "surrealdb": "^1.3.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/node-cron": "^3.0.11",
     "typescript": "^5.3.3"
   },
   "engines": {

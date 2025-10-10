@@ -3,9 +3,17 @@
     "astermind-elm": {
       "command": "node",
       "args": [
-        "/your-path-to/astermind-elm-mcp/build/index.js"
+        "/home/ty/Repositories/ai_workspace/astermind-elm-mcp/build/index.js"
       ],
-      "env": {}
+      "env": {
+        "ENABLE_PERSISTENCE": "true",
+        "LOG_PREDICTIONS": "true",
+        "SURREALDB_URL": "ws://127.0.0.1:8000/rpc",
+        "SURREALDB_NAMESPACE": "astermind",
+        "SURREALDB_DATABASE": "production",
+        "SURREALDB_USERNAME": "root",
+        "SURREALDB_PASSWORD": "root"
+      }
     }
   }
 }
