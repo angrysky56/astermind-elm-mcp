@@ -18,7 +18,7 @@ export interface StoredModel {
   config: object;
   weights: string; // Base64 encoded
   categories: string[];
-  created_at: string;
+  created_at: string | Date;
   trained_on?: string;
   tags: string[];
   metadata: Record<string, any>;
@@ -32,7 +32,7 @@ export interface StoredDataset {
   dataset_id: string;
   examples: Array<{ text: string; label: string }>;
   size: number;
-  created_at: string;
+  created_at: string | Date;
   metadata: Record<string, any>;
 }
 
@@ -47,7 +47,7 @@ export interface PredictionLog {
   ground_truth?: string;
   correct?: boolean;
   latency_ms: number;
-  timestamp: string;
+  timestamp: string | Date;
   metadata: Record<string, any>;
 }
 
@@ -58,8 +58,8 @@ export interface MetricRecord {
   version: string;
   metric_name: string;
   metric_value: number;
-  window_start: string;
-  window_end: string;
+  window_start: string | Date;
+  window_end: string | Date;
   sample_count: number;
 }
 
@@ -71,7 +71,7 @@ export interface EmbeddingRecord {
   text: string;
   embedding: number[];
   metadata: Record<string, any>;
-  created_at: string;
+  created_at: string | Date;
 }
 
 export interface ModelMetrics {

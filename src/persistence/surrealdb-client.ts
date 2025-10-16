@@ -66,7 +66,7 @@ export class SurrealDBClient {
       config: params.config,
       weights: params.weights.toString('base64'),
       categories: params.categories,
-      created_at: new Date().toISOString(),
+      created_at: new Date(),
       trained_on: params.trained_on,
       tags: params.tags || [],
       metadata: params.metadata || {},
@@ -136,11 +136,17 @@ export class SurrealDBClient {
   }): Promise<{ success: boolean; record_id: string }> {
     await this.connect();
 
+    // Ensure examples are properly structured
+    const structuredExamples = params.examples.map(ex => ({
+      text: String(ex.text),
+      label: String(ex.label)
+    }));
+
     const result = await this.db.create<StoredDataset>('datasets', {
       dataset_id: params.dataset_id,
-      examples: params.examples,
-      size: params.examples.length,
-      created_at: new Date().toISOString(),
+      examples: structuredExamples,
+      size: structuredExamples.length,
+      created_at: new Date(),
       metadata: params.metadata || {},
     });
 
@@ -154,16 +160,26 @@ export class SurrealDBClient {
   } | null> {
     await this.connect();
 
-    const query = `SELECT examples, size, metadata FROM datasets WHERE dataset_id = $dataset_id LIMIT 1`;
-    const result = await this.db.query<StoredDataset[][]>(query, { dataset_id });
+    // Use * to get all fields, then extract what we need
+    const query = `SELECT * FROM datasets WHERE dataset_id = $dataset_id LIMIT 1`;
+    const result = await this.db.query<any[][]>(query, { dataset_id });
 
     if (!result || result.length === 0 || result[0].length === 0) return null;
 
     const dataset = result[0][0];
+    
+    // Ensure examples is properly parsed
+    const examples = Array.isArray(dataset.examples) 
+      ? dataset.examples.map((ex: any) => ({
+          text: String(ex.text || ''),
+          label: String(ex.label || '')
+        }))
+      : [];
+
     return {
-      examples: dataset.examples,
-      size: dataset.size,
-      metadata: dataset.metadata,
+      examples,
+      size: dataset.size || examples.length,
+      metadata: dataset.metadata || {},
     };
   }
 
@@ -192,7 +208,7 @@ export class SurrealDBClient {
       ground_truth: params.ground_truth,
       correct,
       latency_ms: params.latency_ms,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(),
       metadata: params.metadata || {},
     });
 
@@ -209,11 +225,19 @@ export class SurrealDBClient {
 
     if (timeRange) {
       whereClause += ' AND timestamp >= $start AND timestamp <= $end';
-      params.start = timeRange.start.toISOString();
-      params.end = timeRange.end.toISOString();
+      params.start = timeRange.start;
+      params.end = timeRange.end;
     }
 
-    const statsQuery = `SELECT count() as total, math::mean(confidence) as avg_confidence, math::mean(latency_ms) as avg_latency FROM predictions ${whereClause}`;
+    const statsQuery = `
+      SELECT 
+        count() as total, 
+        math::mean(<float>(SELECT VALUE confidence FROM predictions ${whereClause})) as avg_confidence, 
+        math::mean(<float>(SELECT VALUE latency_ms FROM predictions ${whereClause})) as avg_latency 
+      FROM predictions 
+      ${whereClause} 
+      GROUP ALL
+    `;
     const statsResult = await this.db.query<any[][]>(statsQuery, params);
     const stats = statsResult[0][0];
 
@@ -224,7 +248,14 @@ export class SurrealDBClient {
       predictions_per_label[row.predicted_label] = row.count;
     }
 
-    const accuracyQuery = `SELECT count() as total, array::len(array::filter(correct, fn($v) { return $v == true; })) as correct_count FROM predictions ${whereClause} AND correct != NONE`;
+    const accuracyQuery = `
+      SELECT 
+        count() as total,
+        count(correct = true) as correct_count
+      FROM predictions 
+      ${whereClause} AND correct != NONE
+      GROUP ALL
+    `;
     const accuracyResult = await this.db.query<any[][]>(accuracyQuery, params);
     const accuracyStats = accuracyResult[0][0];
 
@@ -247,8 +278,8 @@ export class SurrealDBClient {
 
     if (timeRange) {
       whereClause += ' AND timestamp >= $start AND timestamp <= $end';
-      params.start = timeRange.start.toISOString();
-      params.end = timeRange.end.toISOString();
+      params.start = timeRange.start;
+      params.end = timeRange.end;
     }
 
     const query = `SELECT predicted_label, ground_truth, count() as count FROM predictions ${whereClause} GROUP BY predicted_label, ground_truth`;
@@ -275,15 +306,15 @@ export class SurrealDBClient {
     const baselineQuery = `SELECT predicted_label, count() as count FROM predictions WHERE model_id = $model_id AND timestamp >= $baseline_start AND timestamp <= $baseline_end GROUP BY predicted_label`;
     const baselineResult = await this.db.query<any[][]>(baselineQuery, {
       model_id: params.model_id,
-      baseline_start: params.baseline_window.start.toISOString(),
-      baseline_end: params.baseline_window.end.toISOString(),
+      baseline_start: params.baseline_window.start,
+      baseline_end: params.baseline_window.end,
     });
 
     const currentQuery = `SELECT predicted_label, count() as count FROM predictions WHERE model_id = $model_id AND timestamp >= $current_start AND timestamp <= $current_end GROUP BY predicted_label`;
     const currentResult = await this.db.query<any[][]>(currentQuery, {
       model_id: params.model_id,
-      current_start: params.current_window.start.toISOString(),
-      current_end: params.current_window.end.toISOString(),
+      current_start: params.current_window.start,
+      current_end: params.current_window.end,
     });
 
     const baselineTotal = baselineResult[0].reduce((sum: number, row: any) => sum + row.count, 0);
@@ -335,7 +366,7 @@ export class SurrealDBClient {
       text: item.text,
       embedding: item.embedding,
       metadata: item.metadata || {},
-      created_at: new Date().toISOString(),
+      created_at: new Date(),
     }));
 
     await this.db.insert<EmbeddingRecord>('embeddings', records);

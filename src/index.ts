@@ -535,31 +535,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         
         elm.trainFromData(encodedX, encodedY);
 
+        // Create a JSON-safe version of config (without encoder instance)
+        const serializableConfig = {
+          categories: classifierConfig.categories,
+          useTokenizer: classifierConfig.useTokenizer,
+          hiddenUnits: classifierConfig.hiddenUnits,
+          activation: classifierConfig.activation,
+          weightInit: classifierConfig.weightInit,
+          ridgeLambda: classifierConfig.ridgeLambda,
+          maxLen: classifierConfig.maxLen,
+          dropout: classifierConfig.dropout
+        };
+
         const result: any = {
           success: true,
           model_id,
           categories,
           training_examples: training_data.length,
-          config: classifierConfig
+          config: serializableConfig
         };
 
         // Persist if requested and enabled
         if (persist && dbClient && ENABLE_PERSISTENCE) {
           const modelVersion = version || new Date().toISOString();
           
-          // Serialize the model
+          // Serialize the model with encoder configuration
           const weights = Buffer.from(JSON.stringify({
             W: elm.model?.W,
             b: elm.model?.b,
             beta: elm.model?.beta,
             charSet: elm.charSet,
-            metrics: elm.metrics
+            metrics: elm.metrics,
+            // Add encoder configuration for reconstruction
+            encoderConfig: {
+              maxLen: classifierConfig.maxLen,
+              mode: 'char',
+              useTokenizer: classifierConfig.useTokenizer
+            }
           }));
 
           await dbClient.storeModel({
             model_id,
             version: modelVersion,
-            config: classifierConfig,
+            config: serializableConfig,
             weights,
             categories,
             trained_on: dataset_id,
@@ -817,16 +835,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Deserialize weights
         const weights = JSON.parse(stored.weights.toString());
         
-        // Create encoder
-        const encoder = new UniversalEncoder({
+        // Reconstruct encoder from saved configuration
+        const encoderConfig = weights.encoderConfig || {
           maxLen: (stored.config as any).maxLen || 30,
-          mode: 'char'
+          mode: 'char',
+          useTokenizer: (stored.config as any).useTokenizer !== false
+        };
+        
+        const encoder = new UniversalEncoder({
+          maxLen: encoderConfig.maxLen,
+          mode: encoderConfig.mode as 'char' | 'token'
         });
 
         // Reconstruct classifier config
         const classifierConfig: ClassifierConfig = {
           ...stored.config as any,
-          encoder
+          encoder,
+          categories: stored.categories
         };
 
         // Create model in memory
