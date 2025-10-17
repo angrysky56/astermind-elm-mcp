@@ -2,7 +2,7 @@
 
 ## Installation (One-Time Setup)
 ```bash
-cd /home/ty/Repositories/ai_workspace/astermind-elm-mcp
+cd /your-path-to/astermind-elm-mcp
 npm install  # Dependencies already installed ✓
 npm run build  # Already built ✓
 ```
@@ -15,7 +15,7 @@ Add to `~/.config/Claude/claude_desktop_config.json`:
     "astermind-elm": {
       "command": "node",
       "args": [
-        "/home/ty/Repositories/ai_workspace/astermind-elm-mcp/build/index.js"
+        "/your-path-to/astermind-elm-mcp/build/index.js"
       ]
     }
   }
@@ -29,7 +29,7 @@ Then restart Claude Desktop.
 ```
 "Train a sentiment classifier with these examples:
 - 'I love this!' → positive
-- 'This is great' → positive  
+- 'This is great' → positive
 - 'Terrible product' → negative
 - 'Very disappointed' → negative"
 ```
