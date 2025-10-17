@@ -502,7 +502,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Create encoder explicitly for text-based classification
         const encoder = new UniversalEncoder({
           maxLen: config?.maxLen || 30,
-          mode: 'char'  // Use character-based encoding
+          mode: 'char',  // Use character-based encoding
+          useTokenizer: true  // Enable tokenization for text
         });
         
         // Create classifier with configuration for TEXT mode
@@ -844,14 +845,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         
         const encoder = new UniversalEncoder({
           maxLen: encoderConfig.maxLen,
-          mode: encoderConfig.mode as 'char' | 'token'
+          mode: encoderConfig.mode as 'char' | 'token',
+          useTokenizer: encoderConfig.useTokenizer,
+          charSet: weights.charSet
         });
 
         // Reconstruct classifier config
         const classifierConfig: ClassifierConfig = {
           ...stored.config as any,
           encoder,
-          categories: stored.categories
+          categories: stored.categories,
+          useTokenizer: encoderConfig.useTokenizer
         };
 
         // Create model in memory
@@ -865,6 +869,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
         elm.charSet = weights.charSet;
         elm.metrics = weights.metrics;
+        elm.useTokenizer = encoderConfig.useTokenizer;
+        elm.encoder = encoder;
 
         return {
           content: [

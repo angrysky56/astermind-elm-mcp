@@ -7,7 +7,6 @@ import { Surreal } from 'surrealdb';
 import type {
   DBConfig,
   StoredModel,
-  StoredDataset,
   PredictionLog,
   ModelMetrics,
   DriftAnalysis,
@@ -136,21 +135,32 @@ export class SurrealDBClient {
   }): Promise<{ success: boolean; record_id: string }> {
     await this.connect();
 
-    // Ensure examples are properly structured
-    const structuredExamples = params.examples.map(ex => ({
-      text: String(ex.text),
-      label: String(ex.label)
+    // Ensure text and label are strings
+    const examples = params.examples.map(ex => ({
+      text: String(ex.text || ''),
+      label: String(ex.label || '')
     }));
 
-    const result = await this.db.create<StoredDataset>('datasets', {
+    const query = `
+      CREATE datasets CONTENT {
+        dataset_id: $dataset_id,
+        examples: $examples,
+        size: $size,
+        created_at: $created_at,
+        metadata: $metadata
+      }
+    `;
+
+    const result = await this.db.query<any[][]>(query, {
       dataset_id: params.dataset_id,
-      examples: structuredExamples,
-      size: structuredExamples.length,
+      examples: examples,
+      size: params.examples.length,
       created_at: new Date(),
-      metadata: params.metadata || {},
+      metadata: params.metadata || {}
     });
 
-    return { success: true, record_id: result[0].id! };
+    const record = result[0][0];
+    return { success: true, record_id: record.id };
   }
 
   async loadDataset(dataset_id: string): Promise<{
@@ -160,7 +170,6 @@ export class SurrealDBClient {
   } | null> {
     await this.connect();
 
-    // Use * to get all fields, then extract what we need
     const query = `SELECT * FROM datasets WHERE dataset_id = $dataset_id LIMIT 1`;
     const result = await this.db.query<any[][]>(query, { dataset_id });
 
@@ -168,18 +177,14 @@ export class SurrealDBClient {
 
     const dataset = result[0][0];
     
-    // Ensure examples is properly parsed
-    const examples = Array.isArray(dataset.examples) 
-      ? dataset.examples.map((ex: any) => ({
-          text: String(ex.text || ''),
-          label: String(ex.label || '')
-        }))
-      : [];
+    // With proper schema, examples should be directly accessible as an array
+    const examples: Array<{ text: string; label: string }> = dataset.examples || [];
+    const metadata = dataset.metadata || {};
 
     return {
       examples,
       size: dataset.size || examples.length,
-      metadata: dataset.metadata || {},
+      metadata,
     };
   }
 
@@ -229,17 +234,28 @@ export class SurrealDBClient {
       params.end = timeRange.end;
     }
 
-    const statsQuery = `
+    // Get all prediction data in one query
+    const allDataQuery = `
       SELECT 
-        count() as total, 
-        math::mean(<float>(SELECT VALUE confidence FROM predictions ${whereClause})) as avg_confidence, 
-        math::mean(<float>(SELECT VALUE latency_ms FROM predictions ${whereClause})) as avg_latency 
+        confidence,
+        latency_ms
       FROM predictions 
-      ${whereClause} 
-      GROUP ALL
+      ${whereClause}
     `;
-    const statsResult = await this.db.query<any[][]>(statsQuery, params);
-    const stats = statsResult[0][0];
+    const allDataResult = await this.db.query<any[][]>(allDataQuery, params);
+    const allData = allDataResult[0] || [];
+
+    // Calculate averages in JavaScript since SurrealDB aggregation has issues
+    const confidences = allData.map((p: any) => p.confidence).filter((c: any) => c !== undefined && c !== null);
+    const latencies = allData.map((p: any) => p.latency_ms).filter((l: any) => l !== undefined && l !== null);
+    
+    const avgConf = confidences.length > 0 
+      ? confidences.reduce((sum: number, val: number) => sum + val, 0) / confidences.length 
+      : 0;
+    
+    const avgLat = latencies.length > 0
+      ? latencies.reduce((sum: number, val: number) => sum + val, 0) / latencies.length
+      : 0;
 
     const labelsQuery = `SELECT predicted_label, count() as count FROM predictions ${whereClause} GROUP BY predicted_label`;
     const labelsResult = await this.db.query<any[][]>(labelsQuery, params);
@@ -263,9 +279,9 @@ export class SurrealDBClient {
 
     return {
       accuracy,
-      total_predictions: stats.total || 0,
-      avg_confidence: stats.avg_confidence || 0,
-      avg_latency_ms: stats.avg_latency || 0,
+      total_predictions: allData.length,
+      avg_confidence: avgConf,
+      avg_latency_ms: avgLat,
       predictions_per_label,
     };
   }

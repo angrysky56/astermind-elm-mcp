@@ -64,12 +64,14 @@ async function initDatabase() {
       DEFINE TABLE IF NOT EXISTS datasets SCHEMAFULL;
       DEFINE FIELD IF NOT EXISTS dataset_id ON datasets TYPE string ASSERT $value != NONE;
       DEFINE FIELD IF NOT EXISTS examples ON datasets TYPE array<object>;
+      DEFINE FIELD IF NOT EXISTS examples.*.text ON datasets TYPE string;
+      DEFINE FIELD IF NOT EXISTS examples.*.label ON datasets TYPE string;
       DEFINE FIELD IF NOT EXISTS size ON datasets TYPE number;
       DEFINE FIELD IF NOT EXISTS created_at ON datasets TYPE datetime DEFAULT time::now();
       DEFINE FIELD IF NOT EXISTS metadata ON datasets TYPE object DEFAULT {};
       DEFINE INDEX IF NOT EXISTS dataset_id_idx ON datasets FIELDS dataset_id UNIQUE;
     `);
-    console.log('  ✅ datasets table');
+    console.log('  ✅ datasets table (with nested field schema)');
 
     // Predictions table
     await db.query(`
