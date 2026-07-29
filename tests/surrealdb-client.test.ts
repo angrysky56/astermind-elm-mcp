@@ -154,7 +154,31 @@ describe('SurrealDBClient drift analysis', () => {
       baseline_distribution: { positive: 0.8, negative: 0.2 },
       current_distribution: { positive: 0.2, negative: 0.8 },
     });
-    expect(result.drift_score).toBeCloseTo(0.8317766, 6);
+    expect(result.drift_score).toBeCloseTo(0.1927448, 6);
+  });
+
+  it('returns finite Jensen-Shannon divergence when label support changes', async () => {
+    const database = new FakeDatabase();
+    database.queryResults.push(
+      [[{ predicted_label: 'positive', count: 10 }]],
+      [[{ predicted_label: 'negative', count: 10 }]],
+    );
+    const client = new SurrealDBClient(config, database);
+
+    const result = await client.detectDrift({
+      model_id: 'model',
+      baseline_window: {
+        start: new Date('2026-01-01T00:00:00Z'),
+        end: new Date('2026-01-01T01:00:00Z'),
+      },
+      current_window: {
+        start: new Date('2026-01-02T00:00:00Z'),
+        end: new Date('2026-01-02T01:00:00Z'),
+      },
+    });
+
+    expect(result.drift_score).toBeCloseTo(Math.log(2), 10);
+    expect(result.drift_detected).toBe(true);
   });
 });
 

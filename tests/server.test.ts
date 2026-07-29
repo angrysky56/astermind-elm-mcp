@@ -77,6 +77,36 @@ describe('core MCP tool workflow', () => {
     await handleToolCall('delete_model', { model_id: modelId });
   });
 
+  it('does not retain a trained model when requested persistence fails', async () => {
+    const modelId = 'test-persistence-rollback';
+    const manager = new ModelManager();
+    const database = {
+      async storeModel() {
+        throw new Error('database unavailable');
+      },
+    } as unknown as NonNullable<ToolContext['dbClient']>;
+    const context: ToolContext = {
+      modelManager: manager,
+      dbClient: database,
+      persistenceEnabled: true,
+      logPredictions: false,
+    };
+
+    const rejected = await handleToolCall('train_classifier', {
+      model_id: modelId,
+      training_data: [
+        { text: 'good', label: 'positive' },
+        { text: 'bad', label: 'negative' },
+      ],
+      config: { hiddenUnits: 8 },
+      persist: true,
+    }, context);
+
+    expect(rejected.isError).toBe(true);
+    expect(readJson(rejected).error).toBe('database unavailable');
+    expect(manager.hasModel(modelId)).toBe(false);
+  });
+
   it('rejects prediction limits outside the advertised contract', async () => {
     const result = await handleToolCall('predict', {
       model_id: 'does-not-matter',

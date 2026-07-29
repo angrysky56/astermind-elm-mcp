@@ -182,6 +182,69 @@ describe('model persistence tool workflow', () => {
     expect(after.predictions).toEqual(before.predictions);
   });
 
+  it('rejects corrupt persisted weights before registering a model', async () => {
+    const database = new StubPersistence();
+    database.storedModel = {
+      model_id: 'corrupt-model',
+      version: '1.0.0',
+      config: {
+        categories: ['positive', 'negative'],
+        hiddenUnits: 8,
+        maxLen: 8,
+        useTokenizer: true,
+      },
+      weights: Buffer.from(JSON.stringify({
+        charSet: 'abc',
+        encoderConfig: {
+          maxLen: 8,
+          mode: 'token',
+          useTokenizer: true,
+        },
+      })),
+      categories: ['positive', 'negative'],
+    };
+    const context = createContext(database);
+
+    const loaded = await handleToolCall('load_model_persistent', {
+      model_id: 'corrupt-model',
+      version: '1.0.0',
+    }, context);
+
+    expect(loaded.isError).toBe(true);
+    expect(readJson(loaded).error).toBe(
+      'Stored model weights are invalid: W must be a non-empty rectangular numeric matrix',
+    );
+    expect(context.modelManager.hasModel('corrupt-model')).toBe(false);
+  });
+
+  it('does not delete an existing model when a persistent load conflicts', async () => {
+    const database = new StubPersistence();
+    const context = createContext(database);
+    const modelId = 'existing-model';
+
+    await handleToolCall('train_classifier', {
+      model_id: modelId,
+      training_data: [
+        { text: 'good', label: 'positive' },
+        { text: 'bad', label: 'negative' },
+      ],
+      config: { hiddenUnits: 8 },
+    }, context);
+    await handleToolCall('store_model_persistent', {
+      model_id: modelId,
+      version: '1.0.0',
+    }, context);
+
+    const conflictingLoad = await handleToolCall('load_model_persistent', {
+      model_id: modelId,
+      version: '1.0.0',
+    }, context);
+
+    expect(conflictingLoad.isError).toBe(true);
+    expect(readJson(conflictingLoad).error).toBe(`Model '${modelId}' already exists`);
+    expect(context.modelManager.hasModel(modelId)).toBe(true);
+  });
+
   it('dispatches dataset, monitoring, and vector tools through persistence', async () => {
     const database = new StubPersistence();
     const context = createContext(database);

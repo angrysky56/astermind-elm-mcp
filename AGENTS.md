@@ -8,11 +8,14 @@ Production TypeScript lives in `src/`. The MCP server and tool schemas are defin
 
 - `npm ci` installs the locked dependency set and runs the package's build preparation.
 - `npm run build` compiles strict TypeScript into `build/`; run this before every commit.
+- `npm test` builds, type-checks tests, and runs the Vitest suite.
+- `npm run test:coverage` runs the full suite with enforced coverage thresholds.
+- `npm run test:integration` runs the live SurrealDB and persistent stdio tests; it requires `SURREALDB_TEST_URL` and an initialized disposable schema.
 - `npm run watch` recompiles continuously during development.
 - `npm run init-db` initializes the configured SurrealDB schema after a successful build.
 - `node build/index.js` starts the stdio MCP server for local client integration.
 
-Use Node.js 18 or newer. SurrealDB is optional unless persistence behavior is under development.
+Use Node.js 20.19 or newer on the Node 20 line, or Node.js 22.12 or newer. SurrealDB is optional unless persistence behavior is under development.
 
 ## Coding Style & Naming Conventions
 
@@ -20,7 +23,7 @@ Match the existing TypeScript: two-space indentation, single quotes, semicolons,
 
 ## Testing Guidelines
 
-No automated test framework or coverage threshold is currently configured. The minimum validation is a clean `npm run build`. For tool changes, exercise the affected tool through an MCP client and record the request and response. Persistence changes must be checked with persistence both disabled and enabled against a disposable SurrealDB instance. If introducing tests, add the runner to `package.json` and name files `*.test.ts`.
+Vitest tests use the `*.test.ts` naming convention. Coverage is enforced for production TypeScript at 80% statements, 65% branches, 80% functions, and 80% lines. Run `npm run test:coverage` before committing. For tool-contract changes, also exercise the affected behavior through the stdio MCP tests. Persistence changes must pass `npm run test:integration` against an initialized disposable SurrealDB instance; the ordinary suite intentionally skips those live-database tests when `SURREALDB_TEST_URL` is absent.
 
 ## Commit & Pull Request Guidelines
 

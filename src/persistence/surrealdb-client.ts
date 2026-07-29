@@ -397,9 +397,11 @@ export class SurrealDBClient {
     const allLabels = new Set([...Object.keys(baselineDist), ...Object.keys(currentDist)]);
 
     for (const label of allLabels) {
-      const p = baselineDist[label] || 0.001;
-      const q = currentDist[label] || 0.001;
-      driftScore += p * Math.log(p / q);
+      const p = baselineDist[label] ?? 0;
+      const q = currentDist[label] ?? 0;
+      const midpoint = (p + q) / 2;
+      if (p > 0) driftScore += 0.5 * p * Math.log(p / midpoint);
+      if (q > 0) driftScore += 0.5 * q * Math.log(q / midpoint);
     }
 
     return {

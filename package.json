@@ -11,6 +11,7 @@
     "test": "npm run build && npm run typecheck:tests && vitest run",
     "test:watch": "vitest",
     "test:coverage": "npm run build && npm run typecheck:tests && vitest run --coverage",
+    "test:integration": "node -e \"if (!process.env.SURREALDB_TEST_URL) throw new Error('SURREALDB_TEST_URL is required')\" && npm run build && npm run typecheck:tests && vitest run tests/surrealdb.integration.test.ts tests/stdio.persistence.e2e.test.ts",
     "watch": "tsc --watch",
     "prepare": "npm run build",
     "init-db": "node build/scripts/init-db.js"
@@ -38,7 +39,7 @@
     "vitest": "^3.2.7"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "overrides": {
     "test-exclude": "^8.0.0"

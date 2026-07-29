@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
+        node-version: [20, 22, 24]
 
     steps:
       - name: Check out repository
@@ -30,3 +30,52 @@ jobs:
 
       - name: Build and test with coverage
         run: npm run test:coverage
+
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      SURREALDB_URL: ws://127.0.0.1:8000/rpc
+      SURREALDB_NAMESPACE: astermind_test
+      SURREALDB_DATABASE: integration
+      SURREALDB_USERNAME: root
+      SURREALDB_PASSWORD: root
+      SURREALDB_TEST_URL: ws://127.0.0.1:8000/rpc
+      SURREALDB_TEST_NAMESPACE: astermind_test
+      SURREALDB_TEST_DATABASE: integration
+      SURREALDB_TEST_USERNAME: root
+      SURREALDB_TEST_PASSWORD: root
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Start SurrealDB
+        run: |
+          docker run --rm --detach --name astermind-surreal-ci --publish 127.0.0.1:8000:8000 surrealdb/surrealdb:v2.3.10 start --log warn --user root --pass root memory
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs astermind-surreal-ci
+          exit 1
+
+      - name: Initialize test schema
+        run: npm run init-db
+
+      - name: Run live persistence tests
+        run: npm run test:integration
+
+      - name: Stop SurrealDB
+        if: always()
+        run: docker stop astermind-surreal-ci || true

@@ -41,7 +41,7 @@ model must survive a restart.
 
 ## Requirements
 
-- Node.js 18 or newer
+- Node.js 20.19+ or 22.12+
 - SurrealDB only when persistence is enabled
 
 ## Install, build, and test
@@ -62,7 +62,8 @@ npm run watch
 
 Coverage is enforced for the production TypeScript at 80% statements, 65%
 branches, 80% functions, and 80% lines. CI runs the locked dependency set on
-Node.js 18, 20, and 22.
+current Node.js 20, 22, and 24 releases, plus the persistence suite against a
+disposable SurrealDB service on Node.js 24.
 
 ## MCP configuration
 
@@ -162,8 +163,8 @@ configured database endpoint are local.
 
 - Accuracy and confusion matrices require predictions logged with
   `ground_truth`.
-- Drift compares predicted-label distributions with KL divergence; it does not
-  measure accuracy degradation or causal drift.
+- Drift compares predicted-label distributions with Jensen-Shannon
+  divergence; it does not measure accuracy degradation or causal drift.
 - `detect_drift` returns `status: "insufficient_data"` and null drift fields if
   either comparison window has no samples.
 - Monitoring queries currently materialize matching prediction rows in the
@@ -180,10 +181,16 @@ configured database endpoint are local.
   database:
 
 ```bash
+npm run build
+SURREALDB_URL=ws://127.0.0.1:8000/rpc \
+SURREALDB_NAMESPACE=astermind_test \
+SURREALDB_DATABASE=integration \
+npm run init-db
+
 SURREALDB_TEST_URL=ws://127.0.0.1:8000/rpc \
 SURREALDB_TEST_NAMESPACE=astermind_test \
 SURREALDB_TEST_DATABASE=integration \
-npx vitest run tests/surrealdb.integration.test.ts
+npm run test:integration
 ```
 
 ## Current limitations

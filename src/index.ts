@@ -66,6 +66,180 @@ export interface ToolCallResult {
   isError?: boolean;
 }
 
+interface PersistedEncoderConfig {
+  maxLen: number;
+  mode: 'char' | 'token';
+  useTokenizer: boolean;
+}
+
+interface PersistedClassifierWeights {
+  W: number[][];
+  b: number[][];
+  beta: number[][];
+  charSet: string;
+  metrics?: {
+    rmse?: number;
+    mae?: number;
+    accuracy?: number;
+    f1?: number;
+    crossEntropy?: number;
+    r2?: number;
+  };
+  encoderConfig: PersistedEncoderConfig;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseNumericMatrix(value: unknown, name: string): number[][] {
+  if (
+    !Array.isArray(value)
+    || value.length === 0
+    || !value.every(row => (
+      Array.isArray(row)
+      && row.length > 0
+      && row.length === value[0].length
+      && row.every(cell => typeof cell === 'number' && Number.isFinite(cell))
+    ))
+  ) {
+    throw new Error(
+      `Stored model weights are invalid: ${name} must be a non-empty rectangular numeric matrix`,
+    );
+  }
+  return value as number[][];
+}
+
+function parsePersistedClassifier(
+  rawWeights: Buffer,
+  rawConfig: object,
+  rawCategories: string[],
+): {
+  weights: PersistedClassifierWeights;
+  classifierConfig: ClassifierConfig;
+  encoder: UniversalEncoder;
+} {
+  let parsedWeights: unknown;
+  try {
+    parsedWeights = JSON.parse(rawWeights.toString());
+  } catch {
+    throw new Error('Stored model weights are invalid: payload is not valid JSON');
+  }
+
+  if (!isRecord(parsedWeights)) {
+    throw new Error('Stored model weights are invalid: payload must be an object');
+  }
+
+  const W = parseNumericMatrix(parsedWeights.W, 'W');
+  const b = parseNumericMatrix(parsedWeights.b, 'b');
+  const beta = parseNumericMatrix(parsedWeights.beta, 'beta');
+
+  if (
+    !Array.isArray(rawCategories)
+    || rawCategories.length < 2
+    || rawCategories.some(category => typeof category !== 'string' || category.length === 0)
+    || new Set(rawCategories).size !== rawCategories.length
+  ) {
+    throw new Error('Stored model config is invalid: categories must contain at least two distinct labels');
+  }
+  if (!isRecord(rawConfig)) {
+    throw new Error('Stored model config is invalid: config must be an object');
+  }
+
+  const rawEncoderConfig = parsedWeights.encoderConfig;
+  if (rawEncoderConfig !== undefined && !isRecord(rawEncoderConfig)) {
+    throw new Error('Stored model encoder config is invalid: encoderConfig must be an object');
+  }
+  const encoderRecord = rawEncoderConfig ?? {};
+  const maxLen = encoderRecord.maxLen ?? rawConfig.maxLen ?? 30;
+  const mode = encoderRecord.mode ?? 'char';
+  const useTokenizer = encoderRecord.useTokenizer ?? (rawConfig.useTokenizer !== false);
+  const charSet = parsedWeights.charSet;
+
+  if (!Number.isInteger(maxLen) || (maxLen as number) <= 0) {
+    throw new Error('Stored model encoder config is invalid: maxLen must be a positive integer');
+  }
+  if (mode !== 'char' && mode !== 'token') {
+    throw new Error("Stored model encoder config is invalid: mode must be 'char' or 'token'");
+  }
+  if (typeof useTokenizer !== 'boolean' || !useTokenizer) {
+    throw new Error('Stored model encoder config is invalid: useTokenizer must be true');
+  }
+  if (typeof charSet !== 'string' || charSet.length === 0) {
+    throw new Error('Stored model weights are invalid: charSet must be a non-empty string');
+  }
+
+  if (W.length !== b.length || b.some(row => row.length !== 1)) {
+    throw new Error('Stored model weights are invalid: b must have one row per hidden unit and one column');
+  }
+  if (beta.length !== W.length || beta.some(row => row.length !== rawCategories.length)) {
+    throw new Error('Stored model weights are invalid: beta dimensions must match hidden units and categories');
+  }
+  if (W[0].length !== charSet.length * (maxLen as number)) {
+    throw new Error('Stored model weights are invalid: W input width does not match the encoder configuration');
+  }
+  if (
+    rawConfig.hiddenUnits !== undefined
+    && (!Number.isInteger(rawConfig.hiddenUnits) || rawConfig.hiddenUnits !== W.length)
+  ) {
+    throw new Error('Stored model config is invalid: hiddenUnits does not match the persisted weights');
+  }
+
+  const activation = rawConfig.activation;
+  if (
+    activation !== undefined
+    && !['relu', 'leakyrelu', 'sigmoid', 'tanh', 'linear', 'gelu'].includes(String(activation))
+  ) {
+    throw new Error('Stored model config is invalid: activation is not supported');
+  }
+  const weightInit = rawConfig.weightInit;
+  if (weightInit !== undefined && !['uniform', 'xavier', 'he'].includes(String(weightInit))) {
+    throw new Error('Stored model config is invalid: weightInit is not supported');
+  }
+
+  const encoderConfig: PersistedEncoderConfig = {
+    maxLen: maxLen as number,
+    mode,
+    useTokenizer,
+  };
+  const encoder = new UniversalEncoder({
+    maxLen: encoderConfig.maxLen,
+    mode: encoderConfig.mode,
+    useTokenizer: encoderConfig.useTokenizer,
+    charSet,
+  });
+  const classifierConfig: ClassifierConfig = {
+    categories: [...rawCategories],
+    encoder,
+    useTokenizer: true,
+    hiddenUnits: W.length,
+    activation: (activation as ClassifierConfig['activation']) ?? 'relu',
+    weightInit: (weightInit as ClassifierConfig['weightInit']) ?? 'xavier',
+    ridgeLambda: typeof rawConfig.ridgeLambda === 'number' && Number.isFinite(rawConfig.ridgeLambda)
+      ? rawConfig.ridgeLambda
+      : 1e-6,
+    maxLen: encoderConfig.maxLen,
+    dropout: typeof rawConfig.dropout === 'number' && Number.isFinite(rawConfig.dropout)
+      ? rawConfig.dropout
+      : 0,
+  };
+
+  return {
+    weights: {
+      W,
+      b,
+      beta,
+      charSet,
+      metrics: isRecord(parsedWeights.metrics)
+        ? parsedWeights.metrics as PersistedClassifierWeights['metrics']
+        : undefined,
+      encoderConfig,
+    },
+    classifierConfig,
+    encoder,
+  };
+}
+
 const defaultToolContext: ToolContext = {
   modelManager,
   dbClient,
@@ -644,16 +818,21 @@ export async function handleToolCall(
             }
           }));
 
-          await dbClient.storeModel({
-            model_id,
-            version: modelVersion,
-            config: serializableConfig,
-            weights,
-            categories,
-            trained_on: dataset_id,
-            tags,
-            description
-          });
+          try {
+            await dbClient.storeModel({
+              model_id,
+              version: modelVersion,
+              config: serializableConfig,
+              weights,
+              categories,
+              trained_on: dataset_id,
+              tags,
+              description
+            });
+          } catch (error) {
+            modelManager.deleteModel(model_id);
+            throw error;
+          }
 
           result.persisted = true;
           result.version = modelVersion;
@@ -916,50 +1095,33 @@ export async function handleToolCall(
           throw new Error(`Model '${model_id}'${version ? ` version '${version}'` : ''} not found in database`);
         }
 
-        // Deserialize weights
-        const weights = JSON.parse(stored.weights.toString());
-        
-        // Reconstruct encoder from saved configuration
-        const encoderConfig = weights.encoderConfig || {
-          maxLen: (stored.config as any).maxLen || 30,
-          // Models saved before encoder metadata was added were trained with
-          // the server's former character-mode preprocessing.
-          mode: 'char',
-          useTokenizer: (stored.config as any).useTokenizer !== false
-        };
-        
-        const encoder = new UniversalEncoder({
-          maxLen: encoderConfig.maxLen,
-          mode: encoderConfig.mode as 'char' | 'token',
-          useTokenizer: encoderConfig.useTokenizer,
-          charSet: weights.charSet
-        });
+        const { weights, classifierConfig, encoder } = parsePersistedClassifier(
+          stored.weights,
+          stored.config,
+          stored.categories,
+        );
 
-        // Reconstruct classifier config
-        const classifierConfig: ClassifierConfig = {
-          ...stored.config as any,
-          encoder,
-          categories: stored.categories,
-          useTokenizer: encoderConfig.useTokenizer
-        };
-
-        // Create model in memory
-        const elm = modelManager.createClassifier(model_id, classifierConfig, stored.description);
-        
-        // Restore weights
-        elm.model = {
-          W: weights.W,
-          b: weights.b,
-          beta: weights.beta
-        };
-        elm.charSet = weights.charSet;
-        elm.metrics = weights.metrics;
-        elm.useTokenizer = encoderConfig.useTokenizer;
-        elm.encoder = encoder;
-        modelManager.updateMetadata(model_id, {
-          version: stored.version,
-          persisted: true,
-        });
+        let created = false;
+        try {
+          const elm = modelManager.createClassifier(model_id, classifierConfig, stored.description);
+          created = true;
+          elm.model = {
+            W: weights.W,
+            b: weights.b,
+            beta: weights.beta
+          };
+          elm.charSet = weights.charSet;
+          elm.metrics = weights.metrics;
+          elm.useTokenizer = weights.encoderConfig.useTokenizer;
+          elm.encoder = encoder;
+          modelManager.updateMetadata(model_id, {
+            version: stored.version,
+            persisted: true,
+          });
+        } catch (error) {
+          if (created) modelManager.deleteModel(model_id);
+          throw error;
+        }
 
         return {
           content: [
