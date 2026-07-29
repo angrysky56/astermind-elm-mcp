@@ -1,5 +1,9 @@
 # AsterMind-ELM MCP Server - Best Practices Guide
 
+> Treat latency, accuracy, confidence, privacy, and retrieval quality as
+> workload-specific properties to measure. The generated vectors are ELM hidden
+> features, not pretrained semantic embeddings.
+
 ## When to Use This Server
 
 ### Perfect Use Cases
@@ -10,7 +14,7 @@
 ✅ **Content Moderation** - Filter safe/unsafe content
 ✅ **Spam Detection** - Classify spam vs legitimate messages
 ✅ **Topic Classification** - Categorize documents by topic
-✅ **Semantic Embeddings** - Generate vectors for similarity search
+✅ **Task-Specific Features** - Generate vectors to evaluate for similarity
 
 ### Not Ideal For
 ❌ **Large Language Generation** - Use LLMs for this
@@ -25,11 +29,11 @@
 - Inference: **Microseconds** per prediction
 - No waiting for model convergence
 
-### Privacy
-- All processing **on-device**
-- No external API calls
-- Complete data privacy
-- No cloud dependencies
+### Data control
+- Model computation happens in the MCP server process.
+- Persistence goes to the configured SurrealDB endpoint.
+- Prediction logging stores raw text and is disabled by default.
+- No model-provider API is required by this server.
 
 ### Simplicity
 - No hyperparameter tuning required
@@ -145,13 +149,13 @@ Model 2a: What type of technical issue?
 Model 2b: What type of general question?
 ```
 
-### Pattern 2: Embedding-Based Search
-Generate embeddings for semantic search:
+### Pattern 2: Feature-Based Search
+Evaluate the task-specific hidden features for retrieval quality:
 
 ```
 1. Train classifier on categories
 2. Extract embeddings from model
-3. Use embeddings for similarity search
+3. Measure whether cosine similarity matches the intended notion of relevance
 4. Find most similar documents
 ```
 

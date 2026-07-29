@@ -1,5 +1,9 @@
 # Quick Start: Industrial Strength Enhancement
 
+> Historical enhancement proposal, not the current setup guide. It describes
+> unimplemented automation and orchestration features. Use `README.md` for
+> installation and the actual 16-tool surface.
+
 ## What We're Building
 
 Transform AsterMind-ELM from a simple in-memory classifier to a **production-ready ML platform** with:

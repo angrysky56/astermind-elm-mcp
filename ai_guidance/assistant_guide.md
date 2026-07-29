@@ -1,5 +1,9 @@
 # Guide for AI Assistants Using AsterMind-ELM MCP
 
+> Current contract: 16 tools are available. `save_model` returns a summary,
+> persistence requires the SurrealDB tools, and generated vectors are
+> task-specific ELM hidden features rather than pretrained semantic embeddings.
+
 ## Quick Reference Card
 
 ### Available Tools
@@ -8,7 +12,10 @@
 3. **generate_embedding** - Extract vector representations
 4. **list_models** - Show all models
 5. **delete_model** - Remove model from memory
-6. **save_model** - Export model as JSON
+6. **save_model** - Inspect an in-memory model summary
+
+Persistence, dataset, monitoring, and vector-store tools are also available;
+discover the complete schema through MCP tool listing.
 
 ### Decision Tree
 
@@ -17,9 +24,9 @@ User wants classification?
   ├─ New categories → train_classifier
   └─ Existing model → predict
 
-User wants semantic search?
-  ├─ Need embeddings → generate_embedding
-  └─ Compare similarity → Use embedding vectors
+User wants similarity search?
+  ├─ Has a validated feature model → generate_embedding
+  └─ Needs general semantic retrieval → use a pretrained embedding model
 
 User wants model management?
   ├─ See models → list_models
@@ -76,15 +83,15 @@ Response:
 5. Offer to improve with more examples
 ```
 
-### Pattern 3: Semantic Search
+### Pattern 3: Evaluated Feature Search
 ```
 User: "Find documents similar to this one"
 
 Response:
-1. Use generate_embedding on query
-2. Generate embeddings for document set
+1. Confirm the model-specific features were evaluated for this corpus
+2. Use generate_embedding on the query and documents
 3. Calculate similarity scores
-4. Return ranked results
+4. Return ranked results with the evaluation limitation disclosed
 ```
 
 ## Example Conversations

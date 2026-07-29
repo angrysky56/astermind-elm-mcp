@@ -1,5 +1,9 @@
 # Project Completion Summary
 
+> Historical snapshot from October 2025. Its production-readiness and test
+> claims were not backed by the current automated suite. Use `README.md` and
+> current test output for the supported behavior and limitations.
+
 ## AsterMind-ELM MCP Server - Final Status
 
 **Date:** October 17, 2025

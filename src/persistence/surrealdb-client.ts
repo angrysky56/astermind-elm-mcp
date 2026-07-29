@@ -13,28 +13,61 @@ import type {
   EmbeddingRecord,
 } from './types.js';
 
-export class SurrealDBClient {
-  private db: Surreal;
-  private connected: boolean = false;
+export interface DatabaseAdapter {
+  connect(url: string): Promise<unknown>;
+  signin(credentials: { username: string; password: string }): Promise<unknown>;
+  use(selection: { namespace: string; database: string }): Promise<unknown>;
+  close(): Promise<unknown>;
+  create<T>(resource: string, data: Record<string, unknown>): Promise<T[]>;
+  query<T>(query: string, bindings?: Record<string, unknown>): Promise<T>;
+  insert<T>(resource: string, data: Array<Record<string, unknown>>): Promise<T[]>;
+}
 
-  constructor(private config: DBConfig) {
-    this.db = new Surreal();
+export class SurrealDBClient {
+  private db: DatabaseAdapter;
+  private connected: boolean = false;
+  private connectionPromise: Promise<void> | null = null;
+
+  constructor(
+    private config: DBConfig,
+    database: DatabaseAdapter = new Surreal() as unknown as DatabaseAdapter,
+  ) {
+    this.db = database;
   }
 
   async connect(): Promise<void> {
     if (this.connected) return;
+    if (this.connectionPromise) return this.connectionPromise;
 
-    await this.db.connect(this.config.url);
-    await this.db.signin({
-      username: this.config.username,
-      password: this.config.password,
-    });
-    await this.db.use({
-      namespace: this.config.namespace,
-      database: this.config.database,
-    });
+    this.connectionPromise = (async () => {
+      try {
+        await this.db.connect(this.config.url);
+        await this.db.signin({
+          username: this.config.username,
+          password: this.config.password,
+        });
+        await this.db.use({
+          namespace: this.config.namespace,
+          database: this.config.database,
+        });
 
-    this.connected = true;
+        this.connected = true;
+      } catch (error) {
+        this.connected = false;
+        try {
+          await this.db.close();
+        } catch {
+          // Preserve the connection/setup error as the actionable failure.
+        }
+        throw error;
+      }
+    })();
+
+    try {
+      await this.connectionPromise;
+    } finally {
+      this.connectionPromise = null;
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -260,7 +293,7 @@ export class SurrealDBClient {
     const labelsQuery = `SELECT predicted_label, count() as count FROM predictions ${whereClause} GROUP BY predicted_label`;
     const labelsResult = await this.db.query<any[][]>(labelsQuery, params);
     const predictions_per_label: Record<string, number> = {};
-    for (const row of labelsResult[0]) {
+    for (const row of labelsResult[0] || []) {
       predictions_per_label[row.predicted_label] = row.count;
     }
 
@@ -273,7 +306,7 @@ export class SurrealDBClient {
       GROUP ALL
     `;
     const accuracyResult = await this.db.query<any[][]>(accuracyQuery, params);
-    const accuracyStats = accuracyResult[0][0];
+    const accuracyStats = accuracyResult[0]?.[0];
 
     const accuracy = accuracyStats && accuracyStats.total > 0 ? accuracyStats.correct_count / accuracyStats.total : undefined;
 
@@ -302,7 +335,7 @@ export class SurrealDBClient {
     const result = await this.db.query<any[][]>(query, params);
 
     const matrix: Record<string, Record<string, number>> = {};
-    for (const row of result[0]) {
+    for (const row of result[0] || []) {
       if (!matrix[row.ground_truth]) matrix[row.ground_truth] = {};
       matrix[row.ground_truth][row.predicted_label] = row.count;
     }
@@ -333,16 +366,30 @@ export class SurrealDBClient {
       current_end: params.current_window.end,
     });
 
-    const baselineTotal = baselineResult[0].reduce((sum: number, row: any) => sum + row.count, 0);
-    const currentTotal = currentResult[0].reduce((sum: number, row: any) => sum + row.count, 0);
+    const baselineRows = baselineResult[0] || [];
+    const currentRows = currentResult[0] || [];
+    const baselineTotal = baselineRows.reduce((sum: number, row: any) => sum + row.count, 0);
+    const currentTotal = currentRows.reduce((sum: number, row: any) => sum + row.count, 0);
+
+    if (baselineTotal === 0 || currentTotal === 0) {
+      return {
+        status: 'insufficient_data',
+        drift_detected: null,
+        drift_score: null,
+        baseline_sample_count: baselineTotal,
+        current_sample_count: currentTotal,
+        baseline_distribution: {},
+        current_distribution: {},
+      };
+    }
 
     const baselineDist: Record<string, number> = {};
-    for (const row of baselineResult[0]) {
+    for (const row of baselineRows) {
       baselineDist[row.predicted_label] = row.count / baselineTotal;
     }
 
     const currentDist: Record<string, number> = {};
-    for (const row of currentResult[0]) {
+    for (const row of currentRows) {
       currentDist[row.predicted_label] = row.count / currentTotal;
     }
 
@@ -356,8 +403,11 @@ export class SurrealDBClient {
     }
 
     return {
+      status: 'ok',
       drift_detected: driftScore > 0.1,
       drift_score: driftScore,
+      baseline_sample_count: baselineTotal,
+      current_sample_count: currentTotal,
       baseline_distribution: baselineDist,
       current_distribution: currentDist,
     };

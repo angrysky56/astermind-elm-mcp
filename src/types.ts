@@ -2,6 +2,8 @@
  * Type definitions for AsterMind ELM MCP Server
  */
 
+import type { UniversalEncoder } from '@astermind/astermind-elm';
+
 /**
  * Model types supported by the server
  */
@@ -28,6 +30,8 @@ export interface ModelMetadata {
   trainingExamples?: number;
   categories?: string[];
   description?: string;
+  version?: string;
+  persisted?: boolean;
 }
 
 /**
@@ -36,7 +40,7 @@ export interface ModelMetadata {
 export interface ClassifierConfig {
   categories: string[];
   useTokenizer?: boolean;  // Enable text encoding (required for text classification)
-  encoder?: any;  // Optional prebuilt encoder instance (from UniversalEncoder)
+  encoder?: UniversalEncoder;
   hiddenUnits?: number;
   activation?: ActivationType;
   weightInit?: WeightInit;
@@ -45,6 +49,12 @@ export interface ClassifierConfig {
   dropout?: number;
   charSet?: string;  // Character set for encoding
   tokenizerDelimiter?: RegExp;  // Delimiter for tokenization
+  log?: {
+    verbose?: boolean;
+    toFile?: boolean;
+    modelName?: string;
+    level?: 'debug' | 'info' | 'warn' | 'error';
+  };
 }
 
 /**
@@ -55,6 +65,7 @@ export interface OnlineConfig {
   outputDim: number;
   hiddenUnits?: number;
   activation?: ActivationType;
+  weightInit?: WeightInit;
   ridgeLambda?: number;
   forgettingFactor?: number;
 }
@@ -88,6 +99,8 @@ export interface SearchResult {
  * Embedding configuration
  */
 export interface EmbeddingConfig {
+  dimension: number;
   capacity?: number;
-  normalize?: boolean;
+  storeUnit?: boolean;
+  alsoStoreRaw?: boolean;
 }

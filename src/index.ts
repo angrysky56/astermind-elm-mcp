@@ -14,8 +14,12 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { UniversalEncoder } from '@astermind/astermind-elm';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { ModelManager } from './model-manager.js';
 import { SurrealDBClient } from './persistence/surrealdb-client.js';
+import { validateToolArguments } from './tool-validation.js';
+import { encodeText } from './text-features.js';
 import type { DBConfig } from './persistence/types.js';
 import type { 
   ClassifierConfig, 
@@ -46,8 +50,31 @@ if (ENABLE_PERSISTENCE) {
   console.error('ℹ️  Persistence disabled - using in-memory storage only');
 }
 
+export interface ToolContext {
+  modelManager: ModelManager;
+  dbClient: SurrealDBClient | null;
+  persistenceEnabled: boolean;
+  logPredictions: boolean;
+}
+
+export interface ToolCallResult {
+  [key: string]: unknown;
+  content: Array<{
+    type: 'text';
+    text: string;
+  }>;
+  isError?: boolean;
+}
+
+const defaultToolContext: ToolContext = {
+  modelManager,
+  dbClient,
+  persistenceEnabled: ENABLE_PERSISTENCE,
+  logPredictions: LOG_PREDICTIONS,
+};
+
 // Define available tools
-const TOOLS: Tool[] = [
+export const TOOLS: Tool[] = [
   {
     name: 'train_classifier',
     description: 'Train a text classification model using Extreme Learning Machine. Optionally persist to database.',
@@ -56,10 +83,12 @@ const TOOLS: Tool[] = [
       properties: {
         model_id: {
           type: 'string',
+          minLength: 1,
           description: 'Unique identifier for the model'
         },
         training_data: {
           type: 'array',
+          minItems: 2,
           description: 'Array of training examples with text and label',
           items: {
             type: 'object',
@@ -75,27 +104,36 @@ const TOOLS: Tool[] = [
           description: 'Configuration for the classifier',
           properties: {
             hiddenUnits: { 
-              type: 'number', 
+              type: 'integer',
+              minimum: 1,
+              maximum: 2048,
               description: 'Number of hidden units (default: 128)' 
             },
             activation: { 
-              type: 'string', 
+              type: 'string',
+              enum: ['relu', 'leakyrelu', 'sigmoid', 'tanh', 'linear', 'gelu'],
               description: 'Activation function: relu, leakyrelu, sigmoid, tanh, linear, gelu (default: relu)' 
             },
             weightInit: { 
-              type: 'string', 
+              type: 'string',
+              enum: ['uniform', 'xavier', 'he'],
               description: 'Weight initialization: uniform, xavier, he (default: xavier)' 
             },
             ridgeLambda: { 
-              type: 'number', 
+              type: 'number',
+              exclusiveMinimum: 0,
               description: 'Ridge regularization parameter (default: 1e-6)' 
             },
             maxLen: { 
-              type: 'number', 
+              type: 'integer',
+              minimum: 1,
+              maximum: 512,
               description: 'Maximum sequence length (default: 30)' 
             },
             dropout: { 
-              type: 'number', 
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1,
               description: 'Dropout rate (default: 0)' 
             }
           }
@@ -140,7 +178,9 @@ const TOOLS: Tool[] = [
           description: 'Text to classify'
         },
         top_k: {
-          type: 'number',
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
           description: 'Number of top predictions to return (default: 3)'
         },
         log_prediction: {
@@ -157,7 +197,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'generate_embedding',
-    description: 'Generate embedding vector from text using a trained model',
+    description: 'Generate a trained ELM model\'s task-specific hidden-feature vector. This is not a pretrained semantic embedding.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -397,23 +437,26 @@ const TOOLS: Tool[] = [
   // Embedding storage and search
   {
     name: 'store_embeddings',
-    description: 'Store embeddings for similarity search',
+    description: 'Store equal-dimension vectors for cosine-similarity search',
     inputSchema: {
       type: 'object',
       properties: {
         collection_name: {
           type: 'string',
+          minLength: 1,
           description: 'Name of the collection'
         },
         items: {
           type: 'array',
+          minItems: 1,
           items: {
             type: 'object',
             properties: {
-              item_id: { type: 'string' },
-              text: { type: 'string' },
+              item_id: { type: 'string', minLength: 1 },
+              text: { type: 'string', minLength: 1 },
               embedding: { 
                 type: 'array',
+                minItems: 1,
                 items: { type: 'number' }
               },
               metadata: { type: 'object' }
@@ -427,21 +470,25 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'search_similar',
-    description: 'Search for similar items using embedding similarity',
+    description: 'Search stored vectors using exact cosine similarity',
     inputSchema: {
       type: 'object',
       properties: {
         collection_name: {
           type: 'string',
+          minLength: 1,
           description: 'Name of the collection to search'
         },
         query_embedding: {
           type: 'array',
+          minItems: 1,
           items: { type: 'number' },
           description: 'Query embedding vector'
         },
         top_k: {
-          type: 'number',
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
           description: 'Number of results to return',
           default: 5
         }
@@ -469,11 +516,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: TOOLS };
 });
 
-// Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
+// Handle tool calls through an exported boundary so behavior can be tested
+// without starting a stdio server.
+export async function handleToolCall(
+  name: string,
+  args: unknown,
+  context: ToolContext = defaultToolContext,
+): Promise<ToolCallResult> {
   try {
+    args = validateToolArguments(name, args);
+    const {
+      modelManager,
+      dbClient,
+      persistenceEnabled,
+      logPredictions,
+    } = context;
+
     switch (name) {
       case 'train_classifier': {
         const { 
@@ -499,42 +557,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Extract unique categories from training data
         const categories = Array.from(new Set(training_data.map(d => d.label)));
         
-        // Create encoder explicitly for text-based classification
-        const encoder = new UniversalEncoder({
-          maxLen: config?.maxLen || 30,
-          mode: 'char',  // Use character-based encoding
-          useTokenizer: true  // Enable tokenization for text
-        });
-        
-        // Create classifier with configuration for TEXT mode
+        // Create classifier in text mode. The ELM dependency owns the encoder,
+        // so training must use that same instance that predict() will use.
         const classifierConfig: ClassifierConfig = {
           categories,
-          useTokenizer: true,  // Enable text mode
-          encoder,  // Pass the encoder instance
-          hiddenUnits: config?.hiddenUnits || 128,
-          activation: config?.activation || 'relu',
-          weightInit: config?.weightInit || 'xavier',
-          ridgeLambda: config?.ridgeLambda || 1e-6,
-          maxLen: config?.maxLen || 30,
-          dropout: config?.dropout || 0
+          useTokenizer: true,
+          hiddenUnits: config?.hiddenUnits ?? 128,
+          activation: config?.activation ?? 'relu',
+          weightInit: config?.weightInit ?? 'xavier',
+          ridgeLambda: config?.ridgeLambda ?? 1e-6,
+          maxLen: config?.maxLen ?? 30,
+          dropout: config?.dropout ?? 0,
+          log: {
+            verbose: false,
+            toFile: false,
+            modelName: model_id,
+            level: 'info'
+          }
         };
 
         // Create and train model
         const elm = modelManager.createClassifier(model_id, classifierConfig, description);
-        
-        // Now encoder should be available
+        const encoder = elm.getEncoder();
+        if (!encoder) {
+          modelManager.deleteModel(model_id);
+          throw new Error('Classifier encoder was not initialized');
+        }
+
         const trainingTexts = training_data.map(d => d.text);
         const trainingLabels = training_data.map(d => d.label);
         
         // Encode training data
-        const encodedX = trainingTexts.map(text => encoder.encode(text));
+        const encodedX = trainingTexts.map(text => encodeText(encoder, text));
         const encodedY = trainingLabels.map(label => {
           const encoded = new Array(categories.length).fill(0);
           encoded[categories.indexOf(label)] = 1;
           return encoded;
         });
         
-        elm.trainFromData(encodedX, encodedY);
+        try {
+          elm.trainFromData(encodedX, encodedY);
+        } catch (error) {
+          modelManager.deleteModel(model_id);
+          throw error;
+        }
+        modelManager.updateMetadata(model_id, {
+          trainingExamples: training_data.length,
+        });
 
         // Create a JSON-safe version of config (without encoder instance)
         const serializableConfig = {
@@ -557,7 +626,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         // Persist if requested and enabled
-        if (persist && dbClient && ENABLE_PERSISTENCE) {
+        if (persist && dbClient && persistenceEnabled) {
           const modelVersion = version || new Date().toISOString();
           
           // Serialize the model with encoder configuration
@@ -570,7 +639,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // Add encoder configuration for reconstruction
             encoderConfig: {
               maxLen: classifierConfig.maxLen,
-              mode: 'char',
+              mode: 'token',
               useTokenizer: classifierConfig.useTokenizer
             }
           }));
@@ -588,7 +657,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
           result.persisted = true;
           result.version = modelVersion;
-        } else if (persist && !ENABLE_PERSISTENCE) {
+          modelManager.updateMetadata(model_id, {
+            version: modelVersion,
+            persisted: true,
+          });
+        } else if (persist && !persistenceEnabled) {
           result.warning = 'Persistence requested but ENABLE_PERSISTENCE is not set to true';
         }
 
@@ -607,7 +680,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           model_id, 
           text, 
           top_k = 3,
-          log_prediction = false,
+          log_prediction,
           ground_truth 
         } = args as {
           model_id: string;
@@ -619,6 +692,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const startTime = Date.now();
         const elm = modelManager.getModel(model_id);
+        const metadata = modelManager.getMetadata(model_id);
         const results = elm.predict(text, top_k);
         const latency = Date.now() - startTime;
         
@@ -629,10 +703,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }));
 
         // Log prediction if requested
-        if ((log_prediction || LOG_PREDICTIONS) && dbClient && ENABLE_PERSISTENCE) {
+        if ((log_prediction ?? logPredictions) && dbClient && persistenceEnabled) {
           await dbClient.logPrediction({
             model_id,
-            version: 'in-memory',
+            version: metadata.version ?? 'in-memory',
             input_text: text,
             predicted_label: predictions[0].category,
             confidence: predictions[0].confidence,
@@ -668,7 +742,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('Model does not have an encoder configured');
         }
         
-        const encoded = encoder.encode(text);
+        const encoded = encodeText(encoder, text);
         // getEmbedding expects 2D array (matrix), so wrap in array
         const embedding = elm.getEmbedding([encoded]);
 
@@ -757,7 +831,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Phase 1: Persistence Tools
       case 'store_model_persistent': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -778,7 +852,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           b: elm.model?.b,
           beta: elm.model?.beta,
           charSet: elm.charSet,
-          metrics: elm.metrics
+          metrics: elm.metrics,
+          encoderConfig: {
+            maxLen: elm.maxLen,
+            mode: 'token',
+            useTokenizer: elm.useTokenizer,
+          },
         }));
 
         const config = {
@@ -801,6 +880,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           tags,
           description: description || metadata.description
         });
+        modelManager.updateMetadata(model_id, {
+          version,
+          persisted: true,
+        });
 
         return {
           content: [
@@ -819,7 +902,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'load_model_persistent': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -839,6 +922,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Reconstruct encoder from saved configuration
         const encoderConfig = weights.encoderConfig || {
           maxLen: (stored.config as any).maxLen || 30,
+          // Models saved before encoder metadata was added were trained with
+          // the server's former character-mode preprocessing.
           mode: 'char',
           useTokenizer: (stored.config as any).useTokenizer !== false
         };
@@ -871,6 +956,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         elm.metrics = weights.metrics;
         elm.useTokenizer = encoderConfig.useTokenizer;
         elm.encoder = encoder;
+        modelManager.updateMetadata(model_id, {
+          version: stored.version,
+          persisted: true,
+        });
 
         return {
           content: [
@@ -889,7 +978,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'list_model_versions': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -912,7 +1001,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'store_training_dataset': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -945,7 +1034,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'load_training_dataset': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -973,7 +1062,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Phase 2: Monitoring Tools
       case 'get_model_metrics': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -1004,7 +1093,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_confusion_matrix': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -1034,7 +1123,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'detect_drift': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -1070,7 +1159,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'store_embeddings': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -1104,7 +1193,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'search_similar': {
-        if (!dbClient || !ENABLE_PERSISTENCE) {
+        if (!dbClient || !persistenceEnabled) {
           throw new Error('Persistence is not enabled. Set ENABLE_PERSISTENCE=true');
         }
 
@@ -1153,6 +1242,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true
     };
   }
+}
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  return handleToolCall(request.params.name, request.params.arguments);
 });
 
 // Cleanup on shutdown
@@ -1163,18 +1256,18 @@ async function cleanup() {
   }
 }
 
-process.on('SIGINT', async () => {
-  await cleanup();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  await cleanup();
-  process.exit(0);
-});
-
 // Main execution
 async function main() {
+  process.on('SIGINT', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   
@@ -1185,7 +1278,12 @@ async function main() {
   console.error(`📝 Prediction logging: ${LOG_PREDICTIONS ? 'ENABLED' : 'DISABLED'}`);
 }
 
-main().catch((error) => {
-  console.error('Server error:', error);
-  process.exit(1);
-});
+const isMainModule = process.argv[1] !== undefined
+  && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  main().catch((error) => {
+    console.error('Server error:', error);
+    process.exit(1);
+  });
+}

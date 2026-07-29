@@ -1,5 +1,9 @@
 # 🚀 AsterMind-ELM MCP Server - Complete Project Summary
 
+> Historical exploratory transcript. Several conclusions below are outdated,
+> including semantic-embedding, JSON-export, and production-readiness claims.
+> Use `README.md` for the current contract.
+
 I'll systematically test all the astermind-elm MCP tools for you. Let me start by checking what models currently exist, then train a new classifier and test all the functionality.Great! No models exist yet. Let me train a sentiment classifier to test the system:Perfect! Model trained successfully. Now let's test predictions:Now let's test embedding generation:Excellent! Now let's list all models to see what we have:Perfect! Now let's test saving the model to JSON (this is what you mentioned you were about to test):Interesting - the saved model is too large to display directly (ELM models with weights can be substantial). Let me test a few more operations. Let's train a smaller model and test more functionality:## Test Results Summary
 
 All **astermind-elm MCP tools are working correctly**! Here's what I tested:

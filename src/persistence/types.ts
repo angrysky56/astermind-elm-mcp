@@ -83,8 +83,11 @@ export interface ModelMetrics {
 }
 
 export interface DriftAnalysis {
-  drift_detected: boolean;
-  drift_score: number;
+  status: 'ok' | 'insufficient_data';
+  drift_detected: boolean | null;
+  drift_score: number | null;
+  baseline_sample_count: number;
+  current_sample_count: number;
   baseline_distribution: Record<string, number>;
   current_distribution: Record<string, number>;
 }

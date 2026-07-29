@@ -103,7 +103,7 @@ Use the train_classifier tool:
 
 ### Generating Embeddings
 
-Extract vector representations of text:
+Extract task-specific ELM hidden-feature vectors:
 
 ```plaintext
 Use the generate_embedding tool:
@@ -111,8 +111,8 @@ Use the generate_embedding tool:
 - text: "This is a test sentence"
 ```
 
-Returns a numerical vector that can be used for:
-- Semantic similarity search
+Returns a numerical vector that can be evaluated for:
+- Task-specific similarity search
 - Clustering
 - Visualization
 - Feature extraction
@@ -218,7 +218,8 @@ Sort emails into folders (spam, work, personal, etc.).
 Classify support tickets by urgency or category.
 
 ### 4. Search and Retrieval
-Use embeddings for semantic search in documents.
+Evaluate the model-specific feature vectors before using them for retrieval.
+They are not pretrained semantic embeddings.
 
 ### 5. Data Labeling
 Semi-automated labeling of large datasets.
@@ -258,11 +259,11 @@ Semi-automated labeling of large datasets.
 
 ## Privacy and Security
 
-- ✅ All processing is local
-- ✅ No data sent to external servers
-- ✅ Models stored only in RAM
-- ✅ Complete control over data
-- ⚠️  Models cleared on restart (save important ones!)
+- Model computation runs in this process.
+- Data goes wherever the configured SurrealDB endpoint points.
+- Prediction logging stores raw input text; it is disabled by default.
+- Models are in RAM unless explicitly persisted, and persisted models must be
+  loaded explicitly after restart.
 
 ## Next Steps
 

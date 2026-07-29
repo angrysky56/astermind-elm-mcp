@@ -24,6 +24,15 @@ interface ModelEntry {
   instance: ModelInstance;
 }
 
+function copyMetadata(metadata: ModelMetadata): ModelMetadata {
+  return {
+    ...metadata,
+    created: new Date(metadata.created),
+    lastUsed: new Date(metadata.lastUsed),
+    categories: metadata.categories ? [...metadata.categories] : undefined,
+  };
+}
+
 /**
  * ModelManager - Centralized model lifecycle management
  */
@@ -63,7 +72,10 @@ export class ModelManager {
       throw new Error(`Model '${id}' already exists`);
     }
 
-    const model = new OnlineELM(config);
+    const model = new OnlineELM({
+      ...config,
+      hiddenUnits: config.hiddenUnits ?? 128,
+    });
     
     this.models.set(id, {
       metadata: {
@@ -82,12 +94,16 @@ export class ModelManager {
   /**
    * Create a new embedding store
    */
-  createEmbeddingStore(id: string, config?: EmbeddingConfig, description?: string): EmbeddingStore {
+  createEmbeddingStore(id: string, config: EmbeddingConfig, description?: string): EmbeddingStore {
     if (this.models.has(id)) {
       throw new Error(`Model '${id}' already exists`);
     }
 
-    const store = new EmbeddingStore(config);
+    const store = new EmbeddingStore(config.dimension, {
+      capacity: config.capacity,
+      storeUnit: config.storeUnit,
+      alsoStoreRaw: config.alsoStoreRaw,
+    });
     
     this.models.set(id, {
       metadata: {
@@ -134,7 +150,7 @@ export class ModelManager {
    * List all models with their metadata
    */
   listModels(): ModelMetadata[] {
-    return Array.from(this.models.values()).map(entry => entry.metadata);
+    return Array.from(this.models.values()).map(entry => copyMetadata(entry.metadata));
   }
 
   /**
@@ -145,7 +161,7 @@ export class ModelManager {
     if (!entry) {
       throw new Error(`Model '${id}' not found`);
     }
-    return entry.metadata;
+    return copyMetadata(entry.metadata);
   }
 
   /**
@@ -155,6 +171,9 @@ export class ModelManager {
     const entry = this.models.get(id);
     if (!entry) {
       throw new Error(`Model '${id}' not found`);
+    }
+    if (updates.id !== undefined || updates.type !== undefined) {
+      throw new Error('Model id and type are immutable');
     }
     
     Object.assign(entry.metadata, updates);

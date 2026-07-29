@@ -1,5 +1,10 @@
 # AsterMind-ELM Persistence Features - Ready to Use! 🎉
 
+> This document retains older walkthrough material. The current server exposes
+> 16 tools, persistence is opt-in, persisted models must be loaded explicitly,
+> and production suitability depends on workload-specific testing and security
+> review. See `README.md` for the authoritative contract and limitations.
+
 ## ✅ What's Completed
 
 ### Phase 1: Core Persistence ✨
@@ -66,7 +71,8 @@ Edit your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json` o
 
 ### 3. Restart Claude Desktop
 
-The server will now have **21 tools** instead of the original 6!
+The current server exposes 16 tools in total, including the persistence,
+monitoring, and vector operations below.
 
 ## 📖 Usage Examples
 

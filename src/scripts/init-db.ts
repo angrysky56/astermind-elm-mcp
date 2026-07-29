@@ -45,13 +45,13 @@ async function initDatabase() {
       DEFINE TABLE IF NOT EXISTS models SCHEMAFULL;
       DEFINE FIELD IF NOT EXISTS model_id ON models TYPE string ASSERT $value != NONE;
       DEFINE FIELD IF NOT EXISTS version ON models TYPE string ASSERT $value != NONE;
-      DEFINE FIELD IF NOT EXISTS config ON models TYPE object;
+      DEFINE FIELD OVERWRITE config ON models TYPE object FLEXIBLE;
       DEFINE FIELD IF NOT EXISTS weights ON models TYPE string;
       DEFINE FIELD IF NOT EXISTS categories ON models TYPE array<string>;
       DEFINE FIELD IF NOT EXISTS created_at ON models TYPE datetime DEFAULT time::now();
       DEFINE FIELD IF NOT EXISTS trained_on ON models TYPE option<string>;
       DEFINE FIELD IF NOT EXISTS tags ON models TYPE array<string> DEFAULT [];
-      DEFINE FIELD IF NOT EXISTS metadata ON models TYPE object DEFAULT {};
+      DEFINE FIELD OVERWRITE metadata ON models TYPE object FLEXIBLE DEFAULT {};
       DEFINE FIELD IF NOT EXISTS status ON models TYPE string DEFAULT 'active';
       DEFINE FIELD IF NOT EXISTS description ON models TYPE option<string>;
       DEFINE INDEX IF NOT EXISTS model_version_idx ON models FIELDS model_id, version UNIQUE;
@@ -68,7 +68,7 @@ async function initDatabase() {
       DEFINE FIELD IF NOT EXISTS examples.*.label ON datasets TYPE string;
       DEFINE FIELD IF NOT EXISTS size ON datasets TYPE number;
       DEFINE FIELD IF NOT EXISTS created_at ON datasets TYPE datetime DEFAULT time::now();
-      DEFINE FIELD IF NOT EXISTS metadata ON datasets TYPE object DEFAULT {};
+      DEFINE FIELD OVERWRITE metadata ON datasets TYPE object FLEXIBLE DEFAULT {};
       DEFINE INDEX IF NOT EXISTS dataset_id_idx ON datasets FIELDS dataset_id UNIQUE;
     `);
     console.log('  ✅ datasets table (with nested field schema)');
@@ -85,7 +85,7 @@ async function initDatabase() {
       DEFINE FIELD IF NOT EXISTS correct ON predictions TYPE option<bool>;
       DEFINE FIELD IF NOT EXISTS latency_ms ON predictions TYPE float;
       DEFINE FIELD IF NOT EXISTS timestamp ON predictions TYPE datetime DEFAULT time::now();
-      DEFINE FIELD IF NOT EXISTS metadata ON predictions TYPE object DEFAULT {};
+      DEFINE FIELD OVERWRITE metadata ON predictions TYPE object FLEXIBLE DEFAULT {};
       DEFINE INDEX IF NOT EXISTS predictions_time_idx ON predictions FIELDS timestamp;
       DEFINE INDEX IF NOT EXISTS predictions_model_idx ON predictions FIELDS model_id, timestamp;
     `);
@@ -112,7 +112,7 @@ async function initDatabase() {
       DEFINE FIELD IF NOT EXISTS item_id ON embeddings TYPE string;
       DEFINE FIELD IF NOT EXISTS text ON embeddings TYPE string;
       DEFINE FIELD IF NOT EXISTS embedding ON embeddings TYPE array<float>;
-      DEFINE FIELD IF NOT EXISTS metadata ON embeddings TYPE object DEFAULT {};
+      DEFINE FIELD OVERWRITE metadata ON embeddings TYPE object FLEXIBLE DEFAULT {};
       DEFINE FIELD IF NOT EXISTS created_at ON embeddings TYPE datetime DEFAULT time::now();
       DEFINE INDEX IF NOT EXISTS embeddings_collection_idx ON embeddings FIELDS collection_name, item_id UNIQUE;
     `);
