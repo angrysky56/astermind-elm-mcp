@@ -359,7 +359,7 @@ export const TOOLS: Tool[] = [
         },
         log_prediction: {
           type: 'boolean',
-          description: 'Whether to log this prediction to database for monitoring'
+          description: 'Whether to attempt non-blocking database logging for monitoring'
         },
         ground_truth: {
           type: 'string',
@@ -881,9 +881,9 @@ export async function handleToolCall(
           confidence: r.prob
         }));
 
-        // Log prediction if requested
+        // Logging is best-effort and must not delay or invalidate in-memory inference.
         if ((log_prediction ?? logPredictions) && dbClient && persistenceEnabled) {
-          await dbClient.logPrediction({
+          void dbClient.logPrediction({
             model_id,
             version: metadata.version ?? 'in-memory',
             input_text: text,
@@ -891,6 +891,9 @@ export async function handleToolCall(
             confidence: predictions[0].confidence,
             ground_truth,
             latency_ms: latency
+          }).catch((error: unknown) => {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Prediction logging failed for model '${model_id}':`, errorMessage);
           });
         }
 

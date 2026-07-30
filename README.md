@@ -152,7 +152,9 @@ Enable persistence in the MCP server environment:
 
 Persisted models are loaded explicitly with `load_model_persistent`; they are
 not automatically loaded after restart. If global prediction logging is on,
-`"log_prediction": false` disables it for an individual request.
+`"log_prediction": false` disables it for an individual request. Prediction
+logging is best-effort and non-blocking: inference still returns when the
+database is slow or unavailable, and logging failures are reported on stderr.
 
 Prediction records contain the input text. Enabling logging therefore changes
 the privacy boundary: protect the database, credentials, backups, and access

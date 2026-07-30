@@ -210,6 +210,97 @@ describe('core MCP tool workflow', () => {
     });
   });
 
+  it('returns an in-memory prediction when optional database logging fails', async () => {
+    const manager = new ModelManager();
+    const database = {
+      async logPrediction() {
+        throw new Error('database unavailable');
+      },
+    } as unknown as NonNullable<ToolContext['dbClient']>;
+    const context: ToolContext = {
+      modelManager: manager,
+      dbClient: database,
+      persistenceEnabled: true,
+      logPredictions: true,
+    };
+
+    await handleToolCall('train_classifier', {
+      model_id: 'offline-prediction',
+      training_data: [
+        { text: 'good', label: 'positive' },
+        { text: 'bad', label: 'negative' },
+      ],
+      config: { hiddenUnits: 8 },
+    }, context);
+
+    const predicted = await handleToolCall('predict', {
+      model_id: 'offline-prediction',
+      text: 'good',
+    }, context);
+
+    expect(predicted.isError).not.toBe(true);
+    expect(readJson(predicted).predictions).toEqual([
+      expect.objectContaining({ category: expect.any(String), confidence: expect.any(Number) }),
+      expect.objectContaining({ category: expect.any(String), confidence: expect.any(Number) }),
+    ]);
+  });
+
+  it('does not wait for optional database logging before returning a prediction', async () => {
+    const manager = new ModelManager();
+    let markLoggingStarted!: () => void;
+    let releaseLogging!: () => void;
+    const loggingStarted = new Promise<void>((resolve) => {
+      markLoggingStarted = resolve;
+    });
+    const loggingBlocked = new Promise<void>((resolve) => {
+      releaseLogging = resolve;
+    });
+    const database = {
+      async logPrediction() {
+        markLoggingStarted();
+        await loggingBlocked;
+        return { success: true };
+      },
+    } as unknown as NonNullable<ToolContext['dbClient']>;
+    const context: ToolContext = {
+      modelManager: manager,
+      dbClient: database,
+      persistenceEnabled: true,
+      logPredictions: true,
+    };
+
+    await handleToolCall('train_classifier', {
+      model_id: 'non-blocking-prediction',
+      training_data: [
+        { text: 'good', label: 'positive' },
+        { text: 'bad', label: 'negative' },
+      ],
+      config: { hiddenUnits: 8 },
+    }, context);
+
+    const predictionPromise = handleToolCall('predict', {
+      model_id: 'non-blocking-prediction',
+      text: 'good',
+    }, context);
+    await loggingStarted;
+
+    let predicted;
+    try {
+      predicted = await Promise.race([
+        predictionPromise,
+        new Promise<never>((_, reject) => {
+          setImmediate(() => reject(new Error('prediction waited for database logging')));
+        }),
+      ]);
+    } finally {
+      releaseLogging();
+      await predictionPromise;
+    }
+
+    expect(predicted.isError).not.toBe(true);
+    expect(readJson(predicted).predictions).toHaveLength(2);
+  });
+
   it('generates features, summarizes models, and reports missing models', async () => {
     const modelId = 'test-management';
     await handleToolCall('train_classifier', {

@@ -149,7 +149,7 @@ Then search for documents similar to "neural networks in AI"
 
 ### Enhanced Existing Tools
 - `train_classifier` - Now supports `persist=true` parameter
-- `predict` - Now supports `log_prediction=true` parameter
+- `predict` - Supports best-effort, non-blocking `log_prediction=true`
 
 ## 🔧 Environment Variables
 
